@@ -1,1 +1,30 @@
-
+`timescale 1ns / 1ps
+module alu (
+    input [31:0] operand1, input [31:0] operand2, input [7:0] opcode,
+    output reg [31:0] result, output reg CB, output reg [31:0] EXT, output wire Zero
+);
+    assign Zero = (result == 0);
+    always @(*) begin
+        result=0; CB=0; EXT=0;
+        case (opcode)
+            8'h07: {CB, result} = operand1 + operand2;
+            8'h08: {CB, result} = operand1 - operand2;
+            8'h09: {EXT, result} = operand1 * operand2;
+            8'h0A: if(operand2!=0) begin result = operand1/operand2; EXT = operand1%operand2; end
+            8'h0B: result = operand1 & operand2;
+            8'h0C: result = operand1 | operand2;
+            8'h0D: result = operand1 ^ operand2;
+            8'h0E: result = ~(operand1 | operand2);
+            8'h0F: result = ~(operand1 & operand2);
+            8'h16: result = ~operand1;
+            8'h17: {CB, result} = operand1 + 1;
+            8'h18: {CB, result} = operand1 - 1;
+            // Shifts
+            8'h19: result = operand1 >> 1;
+            8'h20: result = operand1 << 1;
+            // Branch compares (Sub)
+            8'h26, 8'h27: {CB, result} = operand1 - operand2; 
+            default: result = 0;
+        endcase
+    end
+endmodule
