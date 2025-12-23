@@ -1,0 +1,18 @@
+`timescale 1ns / 1ps
+
+module data_memory (
+    input clk, input [15:0] addr, input [31:0] data_in, input we, input re, output [31:0] data_out
+);
+    reg [31:0] mem [0:255];
+    assign data_out = (re) ? mem[addr] : 0;
+    
+    always @(posedge clk) if (we) mem[addr] <= data_in;
+    
+    initial begin
+        mem[10] = 32'd5;  // Val for R2
+        mem[11] = 32'd2;  // Val for R3
+        mem[12] = 32'd7;  // Val for R5 (Match Target)
+        mem[13] = 32'd2;  // Val for R6 (Multiplier)
+        mem[14] = 32'd5;  // Val for R10 (Counter)
+    end
+endmodule
