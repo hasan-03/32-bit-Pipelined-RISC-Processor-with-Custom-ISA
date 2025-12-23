@@ -1,0 +1,28 @@
+`timescale 1ns / 1ps
+
+module reg_bank (
+    input clk,
+    input reset,
+    input [7:0] read_addr1,
+    input [7:0] read_addr2,
+    input [7:0] write_addr,
+    input [31:0] write_data,
+    input write_en,
+    output [31:0] data_out1,
+    output [31:0] data_out2
+);
+    reg [31:0] registers [0:15];
+    integer i;
+
+    // Asynchronous Read
+    assign data_out1 = (read_addr1 == 0) ? 0 : registers[read_addr1];
+    assign data_out2 = (read_addr2 == 0) ? 0 : registers[read_addr2];
+
+    always @(negedge clk or posedge reset) begin
+        if (reset) begin
+            for (i = 0; i < 16; i = i + 1) registers[i] <= 0;
+        end else if (write_en && write_addr != 0) begin
+            registers[write_addr] <= write_data;
+        end
+    end
+endmodule
