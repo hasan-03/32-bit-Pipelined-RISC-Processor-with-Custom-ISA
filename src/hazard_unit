@@ -1,0 +1,29 @@
+`timescale 1ns / 1ps
+
+module hazard_unit (
+    input [7:0] id_rs1,
+    input [7:0] id_rs2,
+    input [7:0] id_ex_rd,
+    input id_ex_memread, // True if instruction in EX is LOAD
+    input branch_taken,
+    
+    output reg stall,
+    output reg flush_id,
+    output reg flush_ex
+);
+    always @(*) begin
+        stall = 0; flush_id = 0; flush_ex = 0;
+
+        // 1. BRANCH (Flush everything behind)
+        if (branch_taken) begin
+            flush_id = 1;
+            flush_ex = 1;
+        end
+        // 2. LOAD-USE HAZARD
+        // If EX instr is LOAD, and its dest is used by ID instr -> STALL
+        else if (id_ex_memread && id_ex_rd != 0 && (id_ex_rd == id_rs1 || id_ex_rd == id_rs2)) begin
+            stall = 1;
+            flush_ex = 1; // Insert Bubble into EX
+        end
+    end
+endmodule
