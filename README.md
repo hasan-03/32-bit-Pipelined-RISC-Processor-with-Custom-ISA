@@ -76,17 +76,3 @@ To write a branch instruction in hex code, you must calculate the **Offset**.
 * **Therefore:** `Offset = Target_Address - Current_PC - 1`
 
 The Offset is an **8-bit signed integer** located in bits `[23:16]`.
-
-#### Example 1: Forward Branch (Skip)
-You are at PC `6` and want to skip to PC `9`.
-* `Offset = 9 - 6 - 1 = 2`
-* **Hex:** `0x02`
-* **Instruction:** `BEQ R1, R5, +2`
-* **Code:** `32'h26020105` (Op `26` | Offset `02` | Rs1 `01` | Rs2 `05`)
-
-#### Example 2: Backward Branch (Loop)
-You are at PC `11` and want to loop back to PC `9`.
-* `Offset = 9 - 11 - 1 = -3`
-* **Hex:** `-3` in 8-bit 2's complement is `0xFD` (`1111 1101`).
-* **Instruction:** `BNE R10, R0, -3`
-* **Code:** `32'h27FD0A00` (Op `27` | Offset `FD` | Rs1 `0A` | Rs2 `00`)
