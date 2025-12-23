@@ -1,0 +1,53 @@
+`timescale 1ns / 1ps
+
+module tb_processor();
+    reg clk, reset;
+    wire [31:0] debug_pc, debug_alu;
+    
+    processor uut (
+        .clk(clk),
+        .reset(reset),
+        .debug_pc(debug_pc),
+        .debug_alu_result(debug_alu)
+    );
+    
+    initial begin
+        clk = 0;
+        forever #5 clk = ~clk;
+    end
+    
+    initial begin
+        reset = 1;
+        #20;
+        reset = 0;
+        
+        $display("--- SIMULATION STARTED ---");
+        #1000; 
+        
+        
+        // 1. Verify Forward Branching (Dead Code Skip)
+        // R2 started as 5. The skipped instruction was "ADD R2...".
+        // If R2 is still 5, the branch worked.
+        if (uut.REGS.registers[2] == 5) 
+            $display("[PASS] Branch Logic: Dead Code Skipped (R2 remains 5).");
+        else 
+            $display("[FAIL] Branch Logic: Executed Dead Code! (R2 = %0d)", uut.REGS.registers[2]);
+
+        // 2. Verify Loop Calculation (R1)
+        // 7 * 2 * 2 * 2 * 2 * 2 = 224
+        if (uut.REGS.registers[1] == 224) 
+            $display("[PASS] Loop Logic: R1 = %0d (Expected 224).", uut.REGS.registers[1]);
+        else 
+            $display("[FAIL] Loop Logic: R1 = %0d (Expected 224).", uut.REGS.registers[1]);
+
+        // 3. Verify Loop Counter (R10)
+        // Should execute until 0.
+        if (uut.REGS.registers[10] == 0) 
+            $display("[PASS] Counter Logic: R10 reached 0.");
+        else 
+            $display("[FAIL] Counter Logic: Loop terminated early? (R10 = %0d)", uut.REGS.registers[10]);
+
+        $display("==============================================\n");
+        $finish;
+    end
+endmodule
