@@ -1,0 +1,182 @@
+`timescale 1ns / 1ps
+
+module processor(
+    input clk,
+    input reset,
+    output [31:0] debug_pc,
+    output [31:0] debug_alu_result
+);
+
+    reg [31:0] IF_ID_PC, IF_ID_Instr;
+    
+    reg [31:0] ID_EX_PC, ID_EX_RegR1, ID_EX_RegR2, ID_EX_Imm;
+    reg [7:0]  ID_EX_Opcode, ID_EX_DestReg, ID_EX_Rs1, ID_EX_Rs2;
+    reg ID_EX_MemRead, ID_EX_MemWrite, ID_EX_RegWrite, ID_EX_ALUSrc, ID_EX_MemToReg;
+    
+    reg [31:0] EX_MEM_ALUResult, EX_MEM_WriteData;
+    reg [7:0]  EX_MEM_DestReg;
+    reg EX_MEM_MemRead, EX_MEM_MemWrite, EX_MEM_RegWrite, EX_MEM_MemToReg;
+
+    reg [31:0] MEM_WB_ReadData, MEM_WB_ALUResult;
+    reg [7:0]  MEM_WB_DestReg;
+    reg MEM_WB_RegWrite, MEM_WB_MemToReg;
+
+    reg [15:0] pc;
+    wire [31:0] if_instr, wb_final_data, id_r1_out, id_r2_out, ex_result, mem_rdata;
+    wire [1:0] fwd_a, fwd_b;
+    wire stall, flush_id, flush_ex, branch_taken, ex_zero;
+
+    inst_memory IMEM (.addr(pc), .instruction(if_instr));
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            pc <= 0; IF_ID_PC <= 0; IF_ID_Instr <= 0;
+        end else begin
+            if (branch_taken) begin
+                // Branch Target: PC + 1 + Offset
+                pc <= ID_EX_PC[15:0] + ID_EX_Imm[15:0]; 
+                IF_ID_Instr <= 0; // Flush IF/ID
+                IF_ID_PC <= 0;
+            end else if (!stall) begin
+                pc <= pc + 1;
+                IF_ID_PC <= pc;
+                IF_ID_Instr <= (flush_id) ? 32'b0 : if_instr;
+            end
+        end
+    end
+
+    wire [7:0] id_opcode = IF_ID_Instr[31:24];
+    
+    wire is_branch = (id_opcode == 8'h25 || id_opcode == 8'h26 || id_opcode == 8'h27);
+    
+    wire [7:0] id_rs1 = IF_ID_Instr[15:8];
+    
+    wire [7:0] id_rs2 = IF_ID_Instr[7:0]; 
+    wire [7:0] id_rd  = (id_opcode == 8'h02) ? IF_ID_Instr[7:0] : IF_ID_Instr[23:16];
+
+    wire [15:0] imm_load   = IF_ID_Instr[23:8];
+    wire [15:0] imm_branch = {{8{IF_ID_Instr[23]}}, IF_ID_Instr[23:16]}; // Sign Extend 8->16
+    wire [15:0] id_imm     = (is_branch) ? imm_branch : imm_load;
+
+    wire [7:0] actual_rs2 = (id_opcode==8'h01 || is_branch) ? ((is_branch)?id_rs2:id_rd) : id_rs2;
+
+    hazard_unit HU (
+        .id_rs1(id_rs1), .id_rs2(actual_rs2),
+        .id_ex_rd(ID_EX_DestReg), .id_ex_memread(ID_EX_MemRead),
+        .branch_taken(branch_taken),
+        .stall(stall), .flush_id(flush_id), .flush_ex(flush_ex)
+    );
+
+    reg_bank REGS (
+        .clk(clk), .reset(reset),
+        .read_addr1(id_rs1), .read_addr2(actual_rs2),
+        .write_addr(MEM_WB_DestReg), .write_data(wb_final_data), .write_en(MEM_WB_RegWrite),
+        .data_out1(id_r1_out), .data_out2(id_r2_out)
+    );
+
+    // Control Unit
+    reg c_rw, c_mr, c_mw, c_as, c_mtr;
+    always @(*) begin
+        {c_rw, c_mr, c_mw, c_as, c_mtr} = 0;
+        case (id_opcode)
+            8'h01: begin c_mw=1; c_as=1; end // STORE
+            8'h02: begin c_rw=1; c_mr=1; c_mtr=1; c_as=1; end // LOAD
+            8'h25, 8'h26, 8'h27: begin c_as=0; end // BRANCH (Uses Regs for compare)
+            8'h24: begin end // HALT
+            default: c_rw=1; // ALU Ops
+        endcase
+    end
+
+    always @(posedge clk or posedge reset) begin
+        if (reset || flush_ex) begin
+            ID_EX_RegWrite<=0; ID_EX_MemWrite<=0; ID_EX_MemRead<=0; ID_EX_Opcode<=0; ID_EX_DestReg<=0;
+        end else if (!stall) begin
+            ID_EX_PC <= IF_ID_PC;
+            ID_EX_RegR1 <= id_r1_out;
+            ID_EX_RegR2 <= id_r2_out;
+            ID_EX_Imm <= {16'b0, id_imm}; // Pass corrected Immediate
+            ID_EX_Opcode <= id_opcode;
+            ID_EX_DestReg <= id_rd;
+            ID_EX_Rs1 <= id_rs1;
+            ID_EX_Rs2 <= actual_rs2;
+            
+            ID_EX_RegWrite <= c_rw; ID_EX_MemRead <= c_mr; ID_EX_MemWrite <= c_mw; 
+            ID_EX_ALUSrc <= c_as; ID_EX_MemToReg <= c_mtr;
+        end
+    end
+
+    forwarding_unit FU (
+        .id_ex_rs1(ID_EX_Rs1), .id_ex_rs2(ID_EX_Rs2),
+        .ex_mem_rd(EX_MEM_DestReg), .ex_mem_regwrite(EX_MEM_RegWrite),
+        .mem_wb_rd(MEM_WB_DestReg), .mem_wb_regwrite(MEM_WB_RegWrite),
+        .forward_a(fwd_a), .forward_b(fwd_b)
+    );
+
+    reg [31:0] alu_in1;
+    always @(*) begin
+        case (fwd_a)
+            2'b00: alu_in1 = (ID_EX_Opcode==8'h01||ID_EX_Opcode==8'h02) ? 0 : ID_EX_RegR1;
+            2'b10: alu_in1 = EX_MEM_ALUResult;
+            2'b01: alu_in1 = wb_final_data;
+            default: alu_in1 = 0;
+        endcase
+    end
+
+    reg [31:0] raw_r2;
+    always @(*) begin
+        case (fwd_b)
+            2'b00: raw_r2 = ID_EX_RegR2;
+            2'b10: raw_r2 = EX_MEM_ALUResult;
+            2'b01: raw_r2 = wb_final_data;
+            default: raw_r2 = 0;
+        endcase
+    end
+    
+    wire [31:0] alu_in2 = (ID_EX_ALUSrc) ? ID_EX_Imm : raw_r2;
+    wire [7:0] alu_opc = (ID_EX_Opcode == 8'h01 || ID_EX_Opcode == 8'h02) ? 8'h07 : ID_EX_Opcode; 
+
+    alu ALU (
+        .operand1(alu_in1), .operand2(alu_in2), .opcode(alu_opc),
+        .result(ex_result), .Zero(ex_zero)
+    );
+
+    // Branch Decision
+    assign branch_taken = (ID_EX_Opcode == 8'h25) || 
+                          (ID_EX_Opcode == 8'h26 && ex_zero) || 
+                          (ID_EX_Opcode == 8'h27 && !ex_zero);
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin EX_MEM_RegWrite <= 0; EX_MEM_MemWrite <= 0; end
+        else begin
+            EX_MEM_ALUResult <= ex_result;
+            EX_MEM_WriteData <= raw_r2; 
+            EX_MEM_DestReg <= ID_EX_DestReg;
+            EX_MEM_RegWrite <= ID_EX_RegWrite;
+            EX_MEM_MemRead <= ID_EX_MemRead;
+            EX_MEM_MemWrite <= ID_EX_MemWrite;
+            EX_MEM_MemToReg <= ID_EX_MemToReg;
+        end
+    end
+
+    data_memory DMEM (
+        .clk(clk), .addr(EX_MEM_ALUResult[15:0]), .data_in(EX_MEM_WriteData),
+        .we(EX_MEM_MemWrite), .re(EX_MEM_MemRead), .data_out(mem_rdata)
+    );
+
+    always @(posedge clk or posedge reset) begin
+        if (reset) MEM_WB_RegWrite <= 0;
+        else begin
+            MEM_WB_ReadData <= mem_rdata;
+            MEM_WB_ALUResult <= EX_MEM_ALUResult;
+            MEM_WB_DestReg <= EX_MEM_DestReg;
+            MEM_WB_RegWrite <= EX_MEM_RegWrite;
+            MEM_WB_MemToReg <= EX_MEM_MemToReg;
+        end
+    end
+
+    assign wb_final_data = (MEM_WB_MemToReg) ? MEM_WB_ReadData : MEM_WB_ALUResult;
+    
+    assign debug_pc = pc;
+    assign debug_alu_result = wb_final_data;
+
+endmodule
