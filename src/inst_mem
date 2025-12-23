@@ -1,0 +1,65 @@
+`timescale 1ns / 1ps
+
+module inst_memory (input [15:0] addr, output [31:0] instruction);
+    reg [31:0] mem [0:255];
+    assign instruction = mem[addr];
+    
+    initial begin
+        // --- SETUP ---
+        // 0. LOAD R2 (5)
+        mem[0] = 32'h02000A02; 
+        // 1. LOAD R3 (2)
+        mem[1] = 32'h02000B03;
+        // 2. LOAD R5 (7)
+        mem[2] = 32'h02000C05;
+        // 3. LOAD R6 (2)
+        mem[3] = 32'h02000D06;
+        // 4. LOAD R10 (5)
+        mem[4] = 32'h02000E0A;
+
+        // --- CALCULATION ---
+        // 5. ADD R1 = R2 + R3 (Result: 7)
+        mem[5] = 32'h07010203; 
+
+        // --- FORWARD BRANCH CHECK ---
+        // 6. BEQ R1, R5, +2 (Target: PC 9)
+        // OLD: 26 01 05 02 (Overlap Conflict)
+        // NEW: 26 [02] [01] [05] -> Op | Offset | Rs1 | Rs2
+        // Jump +2
+        mem[6] = 32'h26020105; 
+
+        // 7. ADD R2... (Dead Code)
+        mem[7] = 32'h07020102; 
+
+        // 8. ADD R3... (Branch Landing Pad? No, +2 from 6 is 9 (Fetch logic adds 1))
+        // Actually: PC is 6. Logic: PC_next = PC(6) + 1 + Imm(2) = 9.
+        // So instruction at 7 and 8 are skipped.
+        // Let's ensure target is correct.
+        // We want to skip ONE instruction (at 7) and land at 8.
+        // Imm = 1. Target = 6 + 1 + 1 = 8.
+        // Let's stick to skipping TWO (land at 9).
+        
+        // 8. ADD R3, R1, R4 (Dummy instruction to test skipping 7)
+        // R3 = 7 + 0 = 7.
+        mem[8] = 32'h07030104;
+
+        // --- LOOP START (Address 9) ---
+        // 9. MUL R1 = R1 * R6
+        mem[9] = 32'h09010106;
+
+        // 10. DEC R10
+        mem[10] = 32'h180A0A00;
+
+        // 11. BNE R10, R0, -2
+        // Target: 9. Current PC: 11.
+        // Logic: Target = PC(11) + 1 + Imm = 9.
+        // 12 + Imm = 9 -> Imm = -3 (FD).
+        // NEW HEX: 27 [FD] [0A] [00] -> Op | Offset | Rs1 | Rs2
+        mem[11] = 32'h27FD0A00; 
+
+        // 12. HALT
+        mem[12] = 32'h24000000;
+        mem[13] = 32'h24000000;
+        mem[14] = 32'h24000000;
+    end
+endmodule
